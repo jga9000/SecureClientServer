@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="SecClientServer" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/SecClientServer" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Debug/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Option parameters="85.23.168.83 6110 0xFE59 85.23.168.83 6220 file.dat ALICE BOB" />
+				<Compiler>
+					<Add option="-g" />
+				</Compiler>
+				<Linker>
+					<Add library="ws2_32" />
+					<Add library="ssl" />
+					<Add library="crypto" />
+				</Linker>
+			</Target>
+			<Target title="Release">
+				<Option output="bin/Release/SecClientServer" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Release/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-O2" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+				</Linker>
+			</Target>
+		</Build>
+		<Compiler>
+			<Add option="-Wall" />
+			<Add option="-fexceptions" />
+		</Compiler>
+		<Unit filename="crypto.cpp" />
+		<Unit filename="crypto.h" />
+		<Unit filename="helper.cpp" />
+		<Unit filename="helper.h" />
+		<Unit filename="main.cpp" />
+		<Unit filename="message.h" />
+		<Unit filename="socket.cpp" />
+		<Unit filename="socket.h" />
+		<Extensions>
+			<code_completion />
+			<debugger />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>

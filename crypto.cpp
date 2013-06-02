@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <iostream>
 #include <sys/types.h>
 #include <gmon.h>
 #include "crypto.h"
@@ -14,7 +15,10 @@ u_char* Crypto::cbc_crypto_oper( u_char* input,
                                 u_int oper,
                                 bool modify_iv )
 {
-    if( length < 8 )    length = 8;
+    if( length % 8 != 0) {
+        cout << "Converted length " << length << " to " << (length+length % 8);
+        length += length % 8;
+    }
     DES_key_schedule schedule;
 
     DES_set_odd_parity(key);

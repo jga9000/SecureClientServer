@@ -152,7 +152,7 @@ u_char* authenticateToAP( SocketClient& s,
     if( ap_auth_resp->type != MSG_TYPE_KRB_AP_RESP )  throw "Incorrect response.";
 
     // Decrypt MSG_KRB_AP_RESP
-#if 0
+//#if 0
     u_char* ap_auth_resp_nonce_decoded = Crypto::cbc_crypto_oper( ap_auth_resp->nonce,
                                                           SIZE_NONCE,
                                                           (DES_cblock*)session_key,
@@ -162,7 +162,7 @@ u_char* authenticateToAP( SocketClient& s,
     // Parse nonce from final response
     uint8_t* nonce = reinterpret_cast<uint8_t*>(ap_auth_resp_nonce_decoded);
     delete ap_auth_resp_nonce_decoded;
-#endif
+//#endif
     delete server_resp;
 
     cout << "End of AP authentication" << endl;
@@ -182,37 +182,39 @@ void receiveFileFromAP( SocketClient& s,
 
     MSG_KRB_PRIVATE* ap_private_msg = new MSG_KRB_PRIVATE;
     ap_private_msg->type = MSG_TYPE_KRB_PRIVATE;
-    ap_private_msg->length = 8;
+    ap_private_msg->length = 8;//sizeof(MSG_AP_DATA_REQ);   // 8 works
     memset(&(ap_private_msg->data), 0, SIZE_PRV);
 
     MSG_AP_DATA_REQ* ap_data_req = new MSG_AP_DATA_REQ;
     ap_data_req->type = MSG_TYPE_AP_DATA_REQ;
 
     // Use IV-value in real CBC manner
-    DES_cblock cbc_iv;
-    Helper::hexstr_to_key( IV_KEY_DEFAULT, &cbc_iv);
+    u_char* cbc_iv = new u_char[sizeof(DES_cblock)];
+    Helper::hexstr_to_key( IV_KEY_DEFAULT, (DES_cblock*)cbc_iv);
+    //cout << "receiveFileFromAP, using session_key:" << endl;
+    //Helper::printHexValue( session_key, sizeof( DES_cblock ) );
 
     u_char* ap_data_req_encoded = Crypto::cbc_crypto_oper( (u_char*)ap_data_req,
-                                                   (u_long)ap_private_msg->length,
+                                                   ap_private_msg->length,
                                                    (DES_cblock*)session_key,
-                                                   &cbc_iv,
+                                                   (DES_cblock*)cbc_iv,
                                                    DES_ENCRYPT,
                                                    true );
 
-    cout << "receiveFileFromAP, using session_key:" << endl;
-    Helper::printHexValue( session_key, sizeof( DES_cblock ) );
 
     memcpy(ap_private_msg->data, ap_data_req_encoded, ap_private_msg->length);
 
     // Send MSG to AP server using socket
     try {
-        s.sendRequest( (char*)ap_private_msg, sizeof(MSG_KRB_PRIVATE) );
+        s.sendRequest( (char*)ap_private_msg, sizeof(MSG_KRB_PRIVATE));
     }
     catch (...) {
         cerr << "Send error" << endl;
         err = -1;
         terminated = true;
     }
+    delete ap_data_req;
+    delete ap_private_msg;
     // File to be downloaded is file.dat
     ofstream datafile;
 
@@ -220,40 +222,47 @@ void receiveFileFromAP( SocketClient& s,
     {
         datafile.open (file.c_str());
     }
-
     try {
         while( !terminated )
         {
-            // Wait response to the request
-            u_char *server_resp = (u_char*)s.receiveResponse( sizeof(MSG_KRB_PRIVATE) );
+            // Wait response to the request;
+            cout << "Receiving.." << endl;
+            u_char *server_resp = (u_char*)s.receiveResponse( sizeof(MSG_KRB_PRIVATE));
+            cout << "..OK" << endl;
             // Parse response from AP server
+
             MSG_KRB_PRIVATE* ap_private_resp = (MSG_KRB_PRIVATE*)server_resp;
             cout << "AP resp type:" << ap_private_resp->type << endl;
+            cout << "AP resp length:" << ap_private_resp->length << endl;
 
-            // Decrypt data from MSG_KRB_PRIVATE
+            if( ap_private_resp->type != MSG_TYPE_KRB_PRIVATE )
+                {
+                delete server_resp;
+                throw "Incorrect response.";
+                }
+            cout << "Decrypting file using CBC_IV value:" << endl;
+            Helper::printHexValue( cbc_iv, sizeof( DES_cblock ) );
             u_char* ap_private_data_decoded = Crypto::cbc_crypto_oper(
                                                     ap_private_resp->data,
                                                     ap_private_resp->length,
                                                     (DES_cblock*)session_key,
-                                                    &cbc_iv,
+                                                    (DES_cblock*)cbc_iv,
                                                     DES_DECRYPT,
                                                     true );
+            delete server_resp;
 
-            uint16_t type = *(uint16_t*)ap_private_data_decoded;
-            cout << "AP resp data type:" << type << endl;
-
-            if( type == MSG_TYPE_AP_DATA_PLD ) {
-
+            if( ((MSG_AP_DATA_PLD*)ap_private_data_decoded)->type == MSG_TYPE_AP_DATA_PLD ) {
+                cout << "AP resp = MSG_AP_DATA_PLD" << endl;
                 MSG_AP_DATA_PLD* ap_data_pld_resp =
                                         (MSG_AP_DATA_PLD*)ap_private_data_decoded;
 
-                cout << "AP PLD resp length:" << ap_data_pld_resp->type << endl;
-                cout << "AP PLD resp sequence:" << ap_data_pld_resp->type << endl;
+                cout << "AP PLD resp length:" << ap_data_pld_resp->length << endl;
+                cout << "AP PLD resp sequence:" << ap_data_pld_resp->sequence << endl;
 
-                datafile << ap_data_pld_resp->type;
+                datafile << ap_data_pld_resp->data;
             }
-            else if( type == MSG_TYPE_AP_TERMINATE ){
-
+            else if( ((MSG_AP_TERMINATE*)ap_private_data_decoded)->type == MSG_TYPE_AP_TERMINATE ) {
+                cout << "AP resp = MSG_TYPE_AP_TERMINATE" << endl;
                 MSG_AP_TERMINATE* ap_data_pld_resp =
                                         (MSG_AP_TERMINATE*)ap_private_data_decoded;
 
@@ -261,14 +270,11 @@ void receiveFileFromAP( SocketClient& s,
                 terminated = true;
             }
             else{
+                cerr << "Invalid response from AP server" << endl;
                 err = -1;
-                cout << "Invalid response from AP server" << endl;
+                terminated = true;
             }
             delete ap_private_data_decoded;
-            delete server_resp;
-            if( err != 0){
-                break;
-            }
         }
     }
     catch (...) {
@@ -277,8 +283,6 @@ void receiveFileFromAP( SocketClient& s,
     }
 
     datafile.close();
-    delete ap_data_req;
-    delete ap_private_msg;
 
     if( err != 0)   throw "Transmission failed";
 }
@@ -297,7 +301,7 @@ int main(int argc, char* argv[])
         cout << "./client <as_name> <as_port> <as_key> <ap_name> <ap_port>\
 <file> <client_id> <server_id>" << endl;
         cout << "Example" << endl;
-        cout << "./client 85.23.168.83 6110 0xFE59 85.23.168.83 6220\
+        cout << "./client 10.20.30.40 6110 0xFE59 10.20.30.40 6220\
 image.jpg ALICE BOB" << endl;
         return -1;
     }

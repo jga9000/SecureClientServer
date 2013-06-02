@@ -5,16 +5,11 @@
 
 using namespace std;
 
-int Socket::nofSockets_= 0;
-
 void Socket::start() {
-    if (!nofSockets_) {
-        WSADATA info;
-        if (WSAStartup(MAKEWORD(2,0), &info)) {
+    WSADATA info;
+    if (WSAStartup(MAKEWORD(2,0), &info)) {
         throw "Could not start WSA";
-        }
     }
-    ++nofSockets_;
 }
 
 void Socket::end() {
@@ -23,57 +18,29 @@ void Socket::end() {
 
 Socket::Socket() : s_(0) {
     start();
-    // UDP: use SOCK_DGRAM instead of SOCK_STREAM
     s_ = socket(AF_INET,SOCK_STREAM,0);
 
     if (s_ == INVALID_SOCKET) {
         throw "INVALID_SOCKET";
     }
-
-    refCounter_ = new int(1);
 }
 
 Socket::Socket(SOCKET s) : s_(s) {
     start();
-    refCounter_ = new int(1);
 };
 
 Socket::~Socket() {
-    if (! --(*refCounter_)) {
-        close();
-        delete refCounter_;
-    }
-
-    --nofSockets_;
-    if (!nofSockets_) end();
-}
-
-Socket::Socket(const Socket& o) {
-    refCounter_=o.refCounter_;
-    (*refCounter_)++;
-    s_ = o.s_;
-
-    nofSockets_++;
-}
-
-Socket& Socket::operator=(Socket& o) {
-  (*o.refCounter_)++;
-
-    refCounter_ = o.refCounter_;
-    s_ =o.s_;
-
-    nofSockets_++;
-
-    return *this;
+    close();
+    end();
 }
 
 void Socket::close() {
     closesocket(s_);
 }
 
-void Socket::initCtlSocket() {
-    u_long arg = 0;
-    if (ioctlsocket(s_, FIONREAD, &arg) != 0)
+int Socket::handleError( int err )
+{
+    if( err != 0)
     {
         int nError = WSAGetLastError();
         if(nError != WSAEINPROGRESS && nError !=0 )
@@ -85,23 +52,30 @@ void Socket::initCtlSocket() {
 
             // Close our socket entirely
             closesocket(s_);
+            return err;
         }
     }
+    return 0;
+}
+
+void Socket::initCtlSocket(u_long arg) {
+    // 0 for blocking mode
+    u_long arg_ret = arg;
+    handleError( ioctlsocket(s_, FIONBIO, &arg_ret) );
 }
 
 u_long Socket::receiveBytes( char* ret_buf, u_long max_recv) {
     // Nonblocking mode = disabled
-    // arg = amount of data
-
-    // TODO: catch any throw error here
     int rv = recv (s_, ret_buf, max_recv, 0);
     if (rv < 0)
     {
         cout << "Winsock recv error: " << rv << endl;
     }
-    else if( rv > 0 )
-    {
+    else if( rv > 0 ) {
         cout << "received " << rv << " bytes" << endl;
+    }
+    else if( rv == 0) {
+        cout << "received 0 bytes" << endl;
     }
     return rv;
 }
@@ -138,48 +112,57 @@ SocketClient::SocketClient(const std::string& host, int port) : Socket() {
         Sleep( 5000 );
         throw error;
     }
+    initCtlSocket(BlockingSocket);
 }
 
 void SocketClient::sendRequest( char *request,
-                                u_int length )
+                                u_int length,
+                                int blocking_mode )
 {
+    //initCtlSocket(blocking_mode);
     stringstream stream;
     stream.write(request, length);
     sendBytes( stream.str() );
 }
 
-char* SocketClient::receiveResponse( u_int responseSize )
+char* SocketClient::receiveResponse( u_int responseMax, int blocking_mode )
 {
-    initCtlSocket();
+    //initCtlSocket(1);
 
-    char* server_resp = new char [responseSize];
-    u_int resp_size( 0 );
-
-    while( resp_size < responseSize )
+    char* server_resp = new char [responseMax];
+    while( 1 )
     {
-        if( resp_size < responseSize )
+        u_long arg = 0; // How many bytes avail
+        int ret = ioctlsocket(s_, FIONREAD, &arg);
+        if( ret < 0)
         {
-            char* ptr = server_resp+resp_size;
-
-            int response = (u_int)receiveBytes( ptr, responseSize-resp_size );
-            if(response > 0){
-                resp_size += response;
-            }
-            else if(response < 0){
+            if( handleError( ret ) < 0) {
                 delete server_resp;
-                throw response;
+                throw ret;
+                break;
             }
-            else{
-                cout << "Received 0 bytes" << endl;
-                throw "Aborting";
-            }
-
         }
-        else
+
+        if (arg == 0 )
         {
-            cout << "resp size exceed max:" << resp_size << endl;
-            delete server_resp;
-            throw "Aborting";
+            if( handleError( ret ) < 0) {
+                delete server_resp;
+                throw ret;
+                break;
+            }
+        }
+        else{
+            if (arg > responseMax) arg = responseMax;
+
+            int resp = (u_int)receiveBytes( server_resp, responseMax );
+            if( ret < 0 && handleError( resp ) ) {
+                delete server_resp;
+                throw resp;
+            }
+            else if(resp >= 0 ){
+                cout << "SocketClient, received " << resp << " bytes" << endl;
+                break;
+            }
         }
     }
     return server_resp;
